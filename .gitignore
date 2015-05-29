@@ -27,6 +27,7 @@
 *.i*86
 *.x86_64
 *.hex
+my5spec
 
 # Debug files
 *.dSYM/
