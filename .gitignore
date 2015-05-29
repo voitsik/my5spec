@@ -31,3 +31,6 @@ my5spec
 
 # Debug files
 *.dSYM/
+
+# vim
+*.swp
