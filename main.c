@@ -31,7 +31,7 @@ static void usage(const char *prog_name)
     printf("format     - mark5access data format in form <FORMAT>-<Mbps>-<nchan>-<nbit>\n");
     printf("nchan      - number of spectral channels\n");
     printf("aver_time  - approximate integration time per spectrum in milliseconds\n");
-    printf("total_time - total time in seconds");
+    printf("total_time - total time in seconds\n");
 }
 
 static int spec(const char *filename, const char *format, int nchan, 
