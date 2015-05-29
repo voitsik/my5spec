@@ -25,7 +25,13 @@
 
 static void usage(const char *prog_name)
 {
-    printf("Usage: %s file_name format nchan aver_time(ms) total_time(s)\n", prog_name);
+    printf("Usage: %s file_name format nchan aver_time(ms) total_time(s)\n\n", 
+            prog_name);
+    printf("file_name  - the name of the input file\n");
+    printf("format     - mark5access data format in form <FORMAT>-<Mbps>-<nchan>-<nbit>\n");
+    printf("nchan      - number of spectral channels\n");
+    printf("aver_time  - approximate integration time per spectrum in milliseconds\n");
+    printf("total_time - total time in seconds");
 }
 
 static int spec(const char *filename, const char *format, int nchan, 
