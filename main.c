@@ -23,6 +23,13 @@
 #include <mark5access.h>
 
 
+struct fft_data_t {
+    fftwf_plan *plan;
+    fftwf_complex **zdata;
+    float **data;
+    double **spec;
+};
+
 static void usage(const char *prog_name)
 {
     printf("Usage: %s file_name format nchan aver_time(ms) total_time(s)\n\n", 
@@ -34,17 +41,52 @@ static void usage(const char *prog_name)
     printf("total_time - total time in seconds\n");
 }
 
+static void fft_data_init(struct fft_data_t *fft_data, unsigned nchan)
+{
+    unsigned i;
+
+    fft_data->spec = (double **)malloc(nchan * sizeof(double *));
+    fft_data->data = (float **)malloc(nchan * sizeof(float *));
+    fft_data->zdata = (fftwf_complex **)malloc(nchan * sizeof(fftwf_complex *));
+    fft_data->plan = (fftwf_plan *)malloc(nchan * sizeof(fftwf_plan));
+
+    for(i = 0; i < nchan; ++i){
+        fft_data->spec[i] = (double *)malloc(nchan * sizeof(double));
+        fft_data->zdata[i] = fftwf_alloc_complex(nchan+2);
+        /* data[i] = (float *)calloc(2*nchan+2, sizeof(float)); */
+        /* Use in-place FFT */
+        fft_data->data[i] = (float *)(fft_data->zdata[i]);
+        fft_data->plan[i] = fftwf_plan_dft_r2c_1d(nchan*2, fft_data->data[i], 
+                                                  fft_data->zdata[i], FFTW_MEASURE);
+    }
+
+}
+
+static void fft_data_free(struct fft_data_t *fft_data, unsigned nchan)
+{
+    unsigned i;
+
+    for(i = 0; i < nchan; ++i){
+        fftwf_destroy_plan(fft_data->plan[i]);
+        free(fft_data->spec[i]);
+        fftwf_free(fft_data->zdata[i]);
+    }
+
+    free(fft_data->plan);
+    free(fft_data->spec);
+    free(fft_data->data);
+    free(fft_data->zdata);
+
+}
+
 static int spec(const char *filename, const char *format, int nchan, 
                 double aver_time, double total_time, int if_num)
 {
     struct mark5_stream *ms;
+    struct fft_data_t fft_data;
     long long offset = 0;
     int nint;
     double real_step;
-    fftwf_plan *plan;
-    fftwf_complex **zdata;
-    float **data;
-    double **spec;
     int i, j, k;
     int c;  /* Iteration over spectral channels */
     int step_num = 0;  /* Number of time steps */
@@ -69,32 +111,20 @@ static int spec(const char *filename, const char *format, int nchan,
     fprintf(stderr, "Number of time steps = %d\n", step_num);
 
     /* Prepare data arrays */
-    spec = (double **)malloc(ms->nchan * sizeof(double *));
-    data = (float **)malloc(ms->nchan * sizeof(float *));
-    zdata = (fftwf_complex **)malloc(ms->nchan * sizeof(fftwf_complex *));
-    plan = (fftwf_plan *)malloc(ms->nchan * sizeof(fftwf_plan));
-
-    for(i = 0; i < ms->nchan; ++i){
-        spec[i] = (double *)malloc(nchan * sizeof(double));
-        zdata[i] = fftwf_alloc_complex(nchan+2);
-        /* data[i] = (float *)calloc(2*nchan+2, sizeof(float)); */
-        /* Use in-place FFT */
-        data[i] = (float *)zdata[i];
-        plan[i] = fftwf_plan_dft_r2c_1d(nchan*2, data[i], zdata[i], FFTW_MEASURE);
-    }
+    fft_data_init(&fft_data, ms->nchan);
 
     for(k = 0; k < step_num; ++k){
         /* Zero spec */
         /*for(i = 0; i < ms->nchan; ++i)*/
         i = if_num;
             for(c = 0; c < nchan; ++c)
-                spec[i][c] = 0.0;
+                fft_data.spec[i][c] = 0.0;
 
         for(j = 0; j < nint; ++j){
             int status;
             double re, im;
             
-            status = mark5_stream_decode(ms, 2*nchan, data);
+            status = mark5_stream_decode(ms, 2*nchan, fft_data.data);
             if(status < 0){
                 fprintf(stderr, "Error: mark5_stream_decode failed\n");
                 break;
@@ -105,34 +135,24 @@ static int spec(const char *filename, const char *format, int nchan,
             }
             /*for(i = 0; i < ms->nchan; ++i){*/
             i = if_num;
-                fftwf_execute(plan[i]);
+                fftwf_execute(fft_data.plan[i]);
                 for(c = 0; c < nchan; ++c){
 
-                    re = creal(zdata[i][c]);
-                    im = cimag(zdata[i][c]);
-                    spec[i][c] += (re*re + im*im) / (double)(2*nchan);
+                    re = creal(fft_data.zdata[i][c]);
+                    im = cimag(fft_data.zdata[i][c]);
+                    fft_data.spec[i][c] += (re*re + im*im) / (double)(2*nchan);
                 }
             /*}*/
         }
 
         for(c = 0; c < nchan; ++c){
-            printf("%lf ", spec[if_num][c] / (double)nint);
+            printf("%lf ", fft_data.spec[if_num][c] / (double)nint);
         }
         putchar('\n');
 
     }
 
-    for(i = 0; i < ms->nchan; ++i){
-        fftwf_destroy_plan(plan[i]);
-        free(spec[i]);
-        fftwf_free(zdata[i]);
-    }
-
-    free(plan);
-    free(spec);
-    free(data);
-    free(zdata);
-
+    fft_data_free(&fft_data, ms->nchan);
     delete_mark5_stream(ms);
 
     return EXIT_SUCCESS;
