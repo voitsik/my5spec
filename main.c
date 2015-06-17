@@ -15,6 +15,7 @@
  *   along with this program.  If not, see <http://www.gnu.org/licenses/>. *
  ***************************************************************************/
 
+#include <unistd.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdint.h>
@@ -28,45 +29,38 @@ struct fft_data_t {
     fftwf_complex **zdata;
     float **data;
     double **spec;
+    unsigned n_sp_chann;
+    unsigned n_if;
 };
 
-static void usage(const char *prog_name)
-{
-    printf("Usage: %s file_name format nchan aver_time(ms) total_time(s)\n\n", 
-            prog_name);
-    printf("file_name  - the name of the input file\n");
-    printf("format     - mark5access data format in form <FORMAT>-<Mbps>-<nchan>-<nbit>\n");
-    printf("nchan      - number of spectral channels\n");
-    printf("aver_time  - approximate integration time per spectrum in milliseconds\n");
-    printf("total_time - total time in seconds\n");
-}
-
-static void fft_data_init(struct fft_data_t *fft_data, unsigned nchan)
+static void fft_data_init(struct fft_data_t *fft_data, unsigned n_sp_chann, unsigned n_if)
 {
     unsigned i;
 
-    fft_data->spec = (double **)malloc(nchan * sizeof(double *));
-    fft_data->data = (float **)malloc(nchan * sizeof(float *));
-    fft_data->zdata = (fftwf_complex **)malloc(nchan * sizeof(fftwf_complex *));
-    fft_data->plan = (fftwf_plan *)malloc(nchan * sizeof(fftwf_plan));
+    fft_data->n_if = n_if;
+    fft_data->n_sp_chann = n_sp_chann;
+    fft_data->spec = (double **)malloc(n_if * sizeof(double *));
+    fft_data->data = (float **)malloc(n_if * sizeof(float *));
+    fft_data->zdata = (fftwf_complex **)malloc(n_if * sizeof(fftwf_complex *));
+    fft_data->plan = (fftwf_plan *)malloc(n_if * sizeof(fftwf_plan));
 
-    for(i = 0; i < nchan; ++i){
-        fft_data->spec[i] = (double *)malloc(nchan * sizeof(double));
-        fft_data->zdata[i] = fftwf_alloc_complex(nchan+2);
+    for(i = 0; i < n_if; ++i){
+        fft_data->spec[i] = (double *)malloc(n_sp_chann * sizeof(double));
+        fft_data->zdata[i] = fftwf_alloc_complex(n_sp_chann + 2);
         /* data[i] = (float *)calloc(2*nchan+2, sizeof(float)); */
         /* Use in-place FFT */
         fft_data->data[i] = (float *)(fft_data->zdata[i]);
-        fft_data->plan[i] = fftwf_plan_dft_r2c_1d(nchan*2, fft_data->data[i], 
+        fft_data->plan[i] = fftwf_plan_dft_r2c_1d(n_sp_chann * 2, fft_data->data[i], 
                                                   fft_data->zdata[i], FFTW_MEASURE);
     }
 
 }
 
-static void fft_data_free(struct fft_data_t *fft_data, unsigned nchan)
+static void fft_data_free(struct fft_data_t *fft_data)
 {
     unsigned i;
 
-    for(i = 0; i < nchan; ++i){
+    for(i = 0; i < fft_data->n_if; ++i){
         fftwf_destroy_plan(fft_data->plan[i]);
         free(fft_data->spec[i]);
         fftwf_free(fft_data->zdata[i]);
@@ -102,8 +96,7 @@ static int spec(const char *filename, const char *format, int nchan,
 
     /*mark5_stream_print(ms);*/
 
-    /* aver_time in ms */
-    nint = (aver_time * 1e-3) * ms->samprate / (2 * nchan);
+    nint = aver_time * ms->samprate / (2 * nchan);
     fprintf(stderr, "nint = %d\n", nint);
     real_step = (double)(nint * 2 * nchan) / (double)ms->samprate;
     fprintf(stderr, "Real time step = %lf ms\n", real_step * 1e3);
@@ -111,7 +104,7 @@ static int spec(const char *filename, const char *format, int nchan,
     fprintf(stderr, "Number of time steps = %d\n", step_num);
 
     /* Prepare data arrays */
-    fft_data_init(&fft_data, ms->nchan);
+    fft_data_init(&fft_data, nchan, ms->nchan);
 
     for(k = 0; k < step_num; ++k){
         /* Zero spec */
@@ -152,44 +145,85 @@ static int spec(const char *filename, const char *format, int nchan,
 
     }
 
-    fft_data_free(&fft_data, ms->nchan);
+    fft_data_free(&fft_data);
     delete_mark5_stream(ms);
 
     return EXIT_SUCCESS;
 }
 
+static void usage(const char *prog_name)
+{
+    printf("Usage: %s [-a aver_time] [-n nchan] [-l time_limit] [-o offset] INPUT_FILE FORMAT OUTPUT_FILE \n\n", 
+            prog_name);
+    printf("INPUT_FILE - the name of the input file\n");
+    printf("FORMAT     - mark5access data format in form <FORMAT>-<Mbps>-<nchan>-<nbit>\n");
+    printf("\noptional arguments:\n");
+    printf("-a aver_time  - approximate integration time per spectrum in milliseconds (1 ms)\n");
+    printf("-n nchan      - number of spectral channels (128)\n");
+    printf("-l time_limit - total time in seconds\n");
+    printf("-o offset     - offset in seconds from the file beginnig (0)\n");
+}
+
 int main(int argc, char *argv[])
 {
-    int ret = 0;
-    int nchan;
-    double aver_time, total_time;
+    int ret = 0, opt;
 
-    if(argc != 6){
-        usage(argv[0]);
-        exit(0);
-    }
+    /* Parameters */
+    int nchan = 128;
+    double aver_time = 1e-3;    /* 1ms */
+    double total_time = 1200;   /* 20 min */
+    double offset = 0.0;        /* No offset */
 
     /* Check input parameters */
-    nchan = atoi(argv[3]);
-    if(nchan <=0 || nchan > 2<<15){
-        fprintf(stderr, "Ivalid number of spectral channels: %d\n", nchan);
+    while((opt = getopt(argc, argv, "n:a:l:o:h")) != -1){
+        switch(opt){
+            case 'n':
+                nchan = atoi(optarg);
+                if(nchan <=0 || nchan > 2<<15){
+                    fprintf(stderr, "Ivalid number of spectral channels: %d\n", nchan);
 
+                    exit(EXIT_FAILURE);
+                }
+                break;
+            case 'a':
+                aver_time = atof(optarg);
+                if(aver_time <= 0){
+                    fprintf(stderr, "Invalid average time: %lf\n", aver_time);
+
+                    exit(EXIT_FAILURE);
+                }
+                aver_time *= 1e-3;
+                break;
+            case 'l':
+                total_time = atof(optarg);
+                if(total_time <= 0){
+                    fprintf(stderr, "Invalid time limit: %lf\n", total_time);
+
+                    exit(EXIT_FAILURE);
+                }
+                break;
+            case 'o':
+                offset = atof(optarg);
+                if(offset < 0){
+                    fprintf(stderr, "Negative offset is not supported\n");
+                    exit(EXIT_FAILURE);
+                }
+                break;
+            case 'h':
+                usage(argv[0]);
+                exit(EXIT_SUCCESS);
+            default:
+                usage(argv[0]);
+                exit(EXIT_FAILURE);
+        }
+    }
+
+    if(optind >= argc - 1){
+        usage(argv[0]);
         exit(EXIT_FAILURE);
     }
-    aver_time = atof(argv[4]);
-    if(aver_time <= 0){
-        fprintf(stderr, "Invalid average time: %lf\n", aver_time);
 
-        exit(EXIT_FAILURE);
-    }
-    total_time = atof(argv[5]);
-    if(total_time <= 0){
-        fprintf(stderr, "Invalid total time: %lf\n", total_time);
-
-        exit(EXIT_FAILURE);
-    }
-
-    ret = spec(argv[1], argv[2], nchan, aver_time, total_time, 1);
+    ret = spec(argv[optind], argv[optind+1], nchan, aver_time, total_time, 1);
 
     return ret;
 }
