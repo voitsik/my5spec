@@ -7,7 +7,7 @@ Usage: ``my5spec [-a aver_time] [-n nchan] [-l time_limit] [-o offset] INFILE FO
 
 ``FORMAT``    - mark5access data format in form ``<FORMAT>-<Mbps>-<nchan>-<nbit>``
 
-``OUTFILE``   - basename for the output files. Output files will be called `OUTFILE_n`, where n is IF number
+``OUTFILE``   - basename for the output files. Output files will be called `OUTFILE_n`, where n is channel number
 
 Parameters:
 

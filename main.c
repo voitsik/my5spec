@@ -34,7 +34,8 @@ struct fft_data_t {
     unsigned n_if;
 };
 
-static int fft_data_init(struct fft_data_t *fft_data, unsigned n_sp_chann, unsigned n_if)
+static int fft_data_init(struct fft_data_t *fft_data, unsigned n_sp_chann, 
+                         unsigned n_if)
 {
     unsigned i;
     int ret = 0;
@@ -52,8 +53,10 @@ static int fft_data_init(struct fft_data_t *fft_data, unsigned n_sp_chann, unsig
         /* data[i] = (float *)calloc(2*nchan+2, sizeof(float)); */
         /* Use in-place FFT */
         fft_data->data[i] = (float *)(fft_data->zdata[i]);
-        fft_data->plan[i] = fftwf_plan_dft_r2c_1d(n_sp_chann * 2, fft_data->data[i], 
-                                                  fft_data->zdata[i], FFTW_MEASURE);
+        fft_data->plan[i] = fftwf_plan_dft_r2c_1d(n_sp_chann * 2,
+                                                  fft_data->data[i],
+                                                  fft_data->zdata[i],
+                                                  FFTW_MEASURE);
     }
 
     return ret;
@@ -200,7 +203,7 @@ static void usage(const char *prog_name)
     printf("INFILE    - the name of the input file\n");
     printf("FORMAT    - mark5access data format in form <FORMAT>-<Mbps>-<nchan>-<nbit>\n");
     printf("OUTFILE   - basename for the output files.\n\
-Output files will be called 'OUTFILE_n', where n is IF number\n");
+Output files will be called 'OUTFILE_n', where n is channel number\n");
     printf("\noptional arguments:\n");
     printf("  -a aver_time  - approximate integration time per spectrum in milliseconds (1 ms)\n");
     printf("  -n nchan      - number of spectral channels (128)\n");
