@@ -30,30 +30,30 @@ struct fft_data_t {
     fftwf_complex **zdata;
     float **data;
     double **spec;
-    unsigned n_sp_chann;
-    unsigned n_if;
+    unsigned spec_chan_num;
+    unsigned data_chan_num;
 };
 
-static int fft_data_init(struct fft_data_t *fft_data, unsigned n_sp_chann, 
-                         unsigned n_if)
+static int fft_data_init(struct fft_data_t *fft_data, unsigned spec_chan_num, 
+                         unsigned data_chan_num)
 {
     unsigned i;
     int ret = 0;
 
-    fft_data->n_if = n_if;
-    fft_data->n_sp_chann = n_sp_chann;
-    fft_data->spec = (double **)malloc(n_if * sizeof(double *));
-    fft_data->data = (float **)malloc(n_if * sizeof(float *));
-    fft_data->zdata = (fftwf_complex **)malloc(n_if * sizeof(fftwf_complex *));
-    fft_data->plan = (fftwf_plan *)malloc(n_if * sizeof(fftwf_plan));
+    fft_data->data_chan_num = data_chan_num;
+    fft_data->spec_chan_num = spec_chan_num;
+    fft_data->spec = (double **)malloc(data_chan_num * sizeof(double *));
+    fft_data->data = (float **)malloc(data_chan_num * sizeof(float *));
+    fft_data->zdata = (fftwf_complex **)malloc(data_chan_num * sizeof(fftwf_complex *));
+    fft_data->plan = (fftwf_plan *)malloc(data_chan_num * sizeof(fftwf_plan));
 
-    for(i = 0; i < n_if; ++i){
-        fft_data->spec[i] = (double *)malloc(n_sp_chann * sizeof(double));
-        fft_data->zdata[i] = fftwf_alloc_complex(n_sp_chann + 2);
+    for(i = 0; i < data_chan_num; ++i){
+        fft_data->spec[i] = (double *)malloc(spec_chan_num * sizeof(double));
+        fft_data->zdata[i] = fftwf_alloc_complex(spec_chan_num + 2);
         /* data[i] = (float *)calloc(2*nchan+2, sizeof(float)); */
         /* Use in-place FFT */
         fft_data->data[i] = (float *)(fft_data->zdata[i]);
-        fft_data->plan[i] = fftwf_plan_dft_r2c_1d(n_sp_chann * 2,
+        fft_data->plan[i] = fftwf_plan_dft_r2c_1d(spec_chan_num * 2,
                                                   fft_data->data[i],
                                                   fft_data->zdata[i],
                                                   FFTW_MEASURE);
@@ -66,7 +66,7 @@ static void fft_data_free(struct fft_data_t *fft_data)
 {
     unsigned i;
 
-    for(i = 0; i < fft_data->n_if; ++i){
+    for(i = 0; i < fft_data->data_chan_num; ++i){
         fftwf_destroy_plan(fft_data->plan[i]);
         free(fft_data->spec[i]);
         fftwf_free(fft_data->zdata[i]);
@@ -101,7 +101,53 @@ static int mark5_stream_set_time_offset(struct mark5_stream *ms,
 }
 */
 
-static int spec(const char *input_filename, const char *format, 
+/*
+ *  Decode raw data, compute spectrum, accumulate spectrum
+ *
+ */
+static int spec(struct mark5_stream *ms, const struct fft_data_t *fft_data, 
+                unsigned nint)
+{
+    int status, ret = 0;
+    unsigned i, j, c;
+    double re, im;
+    double norm = 1. / (2. * fft_data->spec_chan_num);
+    int chunk = 2 * fft_data->spec_chan_num;
+
+    /* Zero spec */
+    for(i = 0; i < fft_data->data_chan_num; ++i)
+        for(c = 0; c < fft_data->spec_chan_num; ++c)
+            fft_data->spec[i][c] = 0.0;
+
+    for(j = 0; j < nint; ++j){
+        status = mark5_stream_decode(ms, chunk, fft_data->data);
+        if(status <= 0){
+            fprintf(stderr, "mark5_stream_decode failed. End of file?\n");
+            ret++;
+            break;
+        }else if(status < chunk){
+            fprintf(stderr, "Warning: %d / %d samples unpacked\n", status, chunk);
+        }
+        if(ms->consecutivefails > 5){
+            fprintf(stderr, "Error: problem with data decoding\n");
+            ret++;
+            break;
+        }
+        for(i = 0; i < fft_data->data_chan_num; ++i){
+            fftwf_execute(fft_data->plan[i]);  /* Real work here */
+            for(c = 0; c < fft_data->spec_chan_num; ++c){
+                re = creal(fft_data->zdata[i][c]);
+                im = cimag(fft_data->zdata[i][c]);
+                fft_data->spec[i][c] += (re*re + im*im) * norm;
+            }
+        }
+    }
+
+    return ret;
+}
+
+
+static int work(const char *input_filename, const char *format, 
                 int nchan, double aver_time, double total_time, double offset,
                 const char *out_filename_base)
 {
@@ -109,7 +155,7 @@ static int spec(const char *input_filename, const char *format,
     struct fft_data_t fft_data;
     int nint;
     double real_step;
-    int i, j, k;
+    int i, k;
     int c;  /* Iteration over spectral channels */
     int step_num = 0;  /* Number of time steps */
     FILE **out_files;
@@ -148,34 +194,8 @@ static int spec(const char *input_filename, const char *format,
     fft_data_init(&fft_data, nchan, ms->nchan);
 
     for(k = 0; k < step_num; ++k){
-        /* Zero spec */
-        for(i = 0; i < ms->nchan; ++i)
-            for(c = 0; c < nchan; ++c)
-                fft_data.spec[i][c] = 0.0;
-
-        for(j = 0; j < nint; ++j){
-            int status;
-            double re, im;
-            
-            status = mark5_stream_decode(ms, 2*nchan, fft_data.data);
-            if(status < 0){
-                fprintf(stderr, "Error: mark5_stream_decode failed\n");
-                break;
-            }
-            if(ms->consecutivefails > 5){
-                fprintf(stderr, "Error: problem with data decoding\n");
-                break;
-            }
-            for(i = 0; i < ms->nchan; ++i){
-                fftwf_execute(fft_data.plan[i]);
-                for(c = 0; c < nchan; ++c){
-
-                    re = creal(fft_data.zdata[i][c]);
-                    im = cimag(fft_data.zdata[i][c]);
-                    fft_data.spec[i][c] += (re*re + im*im) / (double)(2*nchan);
-                }
-            }
-        }
+        if(spec(ms, &fft_data, nint))
+            break;
 
         for(i = 0; i < ms->nchan; i++){
             for(c = 0; c < nchan; ++c){
@@ -183,7 +203,6 @@ static int spec(const char *input_filename, const char *format,
             }
             fputc('\n', out_files[i]);
         }
-
     }
 
     /* Free resources */
@@ -270,7 +289,7 @@ int main(int argc, char *argv[])
         exit(EXIT_FAILURE);
     }
 
-    ret = spec(argv[optind], argv[optind+1], nchan, aver_time, total_time, offset,
+    ret = work(argv[optind], argv[optind+1], nchan, aver_time, total_time, offset,
                argv[optind+2]);
 
     return ret;
