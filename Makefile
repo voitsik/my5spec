@@ -10,6 +10,6 @@ $(PROG): $(OBJS)
 	$(CC) -o $@ $^ $(LDFLAGS)
 
 clean:
-	rm -f $(PROG) *.o
+	rm -f $(PROG) *.o core
 
 .PHONY: all clean

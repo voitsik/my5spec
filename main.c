@@ -148,16 +148,16 @@ static int spec(struct mark5_stream *ms, const struct fft_data_t *fft_data,
 
 
 static int work(const char *input_filename, const char *format, 
-                int nchan, double aver_time, double total_time, double offset,
+                unsigned nchan, double aver_time, double total_time, double offset,
                 const char *out_filename_base)
 {
     struct mark5_stream *ms;
     struct fft_data_t fft_data;
     int nint;
     double real_step;
-    int i, k;
-    int c;  /* Iteration over spectral channels */
-    int step_num = 0;  /* Number of time steps */
+    int i;
+    unsigned c;  /* Iteration over spectral channels */
+    size_t k, step_num = 0;  /* Number of time steps */
     FILE **out_files;
     char *out_filename;
 
@@ -187,8 +187,8 @@ static int work(const char *input_filename, const char *format,
     printf("nint = %d\n", nint);
     real_step = (double)(nint * 2 * nchan) / (double)ms->samprate;
     printf("Real time step = %lf ms\n", real_step * 1e3);
-    step_num = (int)(total_time / real_step);
-    printf("Number of time steps = %d\n", step_num);
+    step_num = (size_t)(total_time / real_step);
+    /*printf("Number of time steps = %d\n", step_num);*/
 
     /* Prepare data arrays */
     fft_data_init(&fft_data, nchan, ms->nchan);
@@ -204,6 +204,8 @@ static int work(const char *input_filename, const char *format,
             fputc('\n', out_files[i]);
         }
     }
+
+    printf("%lu spectra (%.3f sec) were wrote in each file\n", k, k * real_step);
 
     /* Free resources */
     for(i = 0; i < ms->nchan; ++i)
