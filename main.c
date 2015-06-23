@@ -21,6 +21,7 @@
 #include <stdint.h>
 #include <string.h>
 #include <complex.h>
+#include <math.h>
 #include <fftw3.h>
 #include <mark5access.h>
 
@@ -79,27 +80,64 @@ static void fft_data_free(struct fft_data_t *fft_data)
 
 }
 
+
 /*
+ *
+ *
+ *
+*/
 static int mark5_stream_set_time_offset(struct mark5_stream *ms, 
                                         double offset)
 {
     int mjd, sec, ret = 0;
-    double ns;
+    double ns, real_sec;
 
     if(!ms){
         return -1;
     }
 
+    if(offset > 0){
+        ret = mark5_stream_get_sample_time(ms, &mjd, &sec, &ns);
+        if(ret){
+            fprintf(stderr, "Error in mark5_stream_get_sample_time (#1)\n");
+
+            return ret;
+        }
+        /*
+        printf("Original timestamp:\n");
+        printf("mjd = %d\n", mjd);
+        printf("sec = %d\n", sec);
+        printf("ns  = %lf\n", ns);
+        */
+
+        real_sec = sec + ns * 1e-9;
+        real_sec += offset;
+
+        sec = (int)floor(real_sec);
+        ns = 1e9 * (real_sec - floor(real_sec));
+
+        ret = mark5_stream_seek(ms, mjd, sec, ns);
+        if(ret){
+            fprintf(stderr, "Error in mark5_stream_seek\n");
+
+            return ret;
+        }
+    }
+
     ret = mark5_stream_get_sample_time(ms, &mjd, &sec, &ns);
-    if(ret == -1){
-        fprintf(stderr, "Error in mark5_stream_get_sample_time\n");
+    if(ret){
+        fprintf(stderr, "Error in mark5_stream_get_sample_time (#2)\n");
 
         return ret;
     }
+    printf("Start at:\n");
+    printf("mjd = %d\n", mjd);
+    printf("sec = %d\n", sec);
+    printf("ns  = %lf\n", ns);
 
     return 0;
 }
-*/
+
 
 /*
  *  Decode raw data, compute spectrum, accumulate spectrum
@@ -166,6 +204,10 @@ static int work(const char *input_filename, const char *format,
     if(!ms){
         fprintf(stderr, "Error: problem opening %s\n", input_filename);
 
+        return EXIT_FAILURE;
+    }
+
+    if(mark5_stream_set_time_offset(ms, offset)){
         return EXIT_FAILURE;
     }
 
